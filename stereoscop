@@ -2,11 +2,13 @@
 
 import sys
 import os
+import operator
 import subprocess
-from PIL import Image, ImageOps
 import logging
-import numpy
 import tempfile
+
+from PIL import Image, ImageOps
+import numpy
 
 class SafeError(RuntimeError): pass
 
@@ -60,8 +62,12 @@ class Stereo(object):
 			return final
 		self.outputs = [Output(path=self.add_suffix(), render=render)]
 
-	def add_suffix(self, *suffixes):
-		base, ext = os.path.splitext(self.basename)
+	def add_suffix(self, suffixes=[], ext=None):
+		base, existing_ext = os.path.splitext(self.basename)
+		if ext is not None:
+			ext = os.path.extsep + ext
+		else:
+			ext = existing_ext
 		if self.dest:
 			base = os.path.join(self.dest, base)
 		return "%s-%s%s"% (base, "-".join([self.suffix] + list(suffixes)), ext)
@@ -100,8 +106,8 @@ class Stereo(object):
 
 
 	def split(self, opts=None):
-		left = Output(path=self.add_suffix('left'), render=lambda: self.left)
-		right = Output(path=self.add_suffix('right'), render=lambda: self.right)
+		left = Output(path=self.add_suffix(['left']), render=lambda: self.left)
+		right = Output(path=self.add_suffix(['right']), render=lambda: self.right)
 		self.outputs = [left, right]
 
 	def squash(self, opts=None):
@@ -130,32 +136,33 @@ class Stereo(object):
 					else:
 						return i - 1
 				last_value = value
-			return i
+			return len(items)-1
 
-		def new_channel_mappings():
-			h1 = chunk(self.left.histogram())
-			h2 = chunk(self.right.histogram())
-			for (left, right) in zip(h1, h2):
-				left_hist = numpy.cumsum(left)
-				right_hist = numpy.cumsum(right)
-
+		both_histograms = zip(self.left.histogram(), self.right.histogram())
+		average = lambda tup: operator.add(*tup) / 2.0
+		merged_histograms = list(chunk(map(average, both_histograms)))
+		def match_merged(img):
+			current_histograms = chunk(img.histogram())
+			new_levels = []
+			for current, merged in zip(current_histograms, merged_histograms):
+				current = numpy.cumsum(current)
+				merged = numpy.cumsum(merged)
 				def new_level(level):
-					value_in_left = left_hist[level]
-					return find_closest_idx(value_in_left, right_hist)
-				yield map(new_level, range(0, size))
+					existing_value = current[level]
+					return find_closest_idx(existing_value, merged)
+				new_levels.extend(map(new_level, range(0, size)))
+			return new_levels
 
-		r, g, b = new_channel_mappings()
-		combined_table = r + g + b
-		self.left = self.left.point(combined_table)
+		self.left = self.left.point(match_merged(self.left))
+		self.right = self.right.point(match_merged(self.right))
 
 	def equalize(self, opts=None):
 		self.left, self.right = map(ImageOps.equalize, (self.left, self.right))
 	
-	#TODO: PythonMagick?
 	def animate(self, opts):
 		resize = getattr(opts, 'resize', None)
 		delay = getattr(opts, 'delay', None)
-		gif = AnimatedOuptut(stereo=self, path=self.add_suffix() +'.gif', resize=resize, delay=delay)
+		gif = AnimatedOuptut(stereo=self, path=self.add_suffix(ext='gif'), resize=resize, delay=delay)
 		self.outputs = [gif]
 	
 	def save(self, conflict_resolver):

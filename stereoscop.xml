@@ -1,0 +1,23 @@
+<?xml version="1.0" ?>
+<?xml-stylesheet type='text/xsl' href='interface.xsl'?>
+<interface uri="http://gfxmonk.net/dist/0install/stereoscop.xml" xmlns="http://zero-install.sourceforge.net/2004/injector/interface">
+	<name>stereoscop</name>
+	<summary>Batch modify stereoscopic images</summary>
+	<description>
+Batch modify stereoscopic images
+	</description>
+
+	<group main="stereoscop">
+		<requires interface="http://gfxmonk.net/dist/0install/python-imaging.xml"/>
+		<requires interface="http://gfxmonk.net/dist/0install/imagemagick.xml"/>
+		<requires interface="http://gfxmonk.net/dist/0install/numpy.xml"/>
+		<requires interface="http://repo.roscidus.com/python/python"/>
+		<command name="run" path="stereoscop">
+			<runner interface="http://repo.roscidus.com/python/python"/>
+		</command>
+		<environment name="PATH" insert="" mode="prepend" />
+
+		<implementation id="." version="0.0.1">
+		</implementation>
+	</group>
+</interface>
