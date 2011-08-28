@@ -168,6 +168,11 @@ class Stereo(object):
 	def contrast(self, amount):
 		self.map(lambda img: ImageEnhance.Contrast(img).enhance(amount))
 	
+	def apply_adjustments(self, opts):
+		for attr in ('brightness', 'contrast', 'slice', 'align'):
+			fn = getattr(self, attr)
+			fn(getattr(opts, attr))
+	
 	def animate(self, opts):
 		resize = getattr(opts, 'resize', None)
 		delay = getattr(opts, 'delay', None)
@@ -278,12 +283,12 @@ class AnimatedOuptut(object):
 class Gui(object):
 	def __init__(self, image, opts):
 		self.image = image
-		self.opts = opts
-		self.slice = opts.slice or 0
-		self.align = opts.align or 0
 		self.approved = False
-		self.brightness = 1.0
-		self.contrast = 1.0
+		self.opts = opts
+		self.slice = opts.slice
+		self.align = opts.align
+		self.brightness = opts.brightness
+		self.contrast = opts.contrast
 	
 	def display(self):
 		from PIL import ImageTk
@@ -298,10 +303,7 @@ class Gui(object):
 		self.label.update()
 	
 	def update(self, image):
-		image.slice(self.slice)
-		image.align(self.align)
-		image.brightness(self.brightness)
-		image.contrast(self.contrast)
+		image.apply_adjustments(self)
 		return image
 
 	def opts_description(self):
@@ -418,6 +420,8 @@ def main():
 	gui_opts.add_option('--size', dest='resize', help='alias for --resize')
 	gui_opts.add_option('--slice', default=0, type='int')
 	gui_opts.add_option('--align', default=0, type='int')
+	gui_opts.add_option('--brightness', default=1.0, type='float')
+	gui_opts.add_option('--contrast', default=1.0, type='float')
 
 	p.add_option_group(input_opts)
 	p.add_option_group(actions)
@@ -448,6 +452,8 @@ def main():
 			logging.debug("image -> %r" % (image,))
 		if opts.gui:
 			Gui(image, opts).run()
+		else:
+			image.apply_adjustments(opts)
 		image.save(conflict_resolver = conflict_resolver)
 
 	if opts.left and opts.right:
