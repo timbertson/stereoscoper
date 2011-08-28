@@ -7,7 +7,7 @@ import subprocess
 import logging
 import tempfile
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageEnhance
 import numpy
 
 class SafeError(RuntimeError): pass
@@ -115,7 +115,7 @@ class Stereo(object):
 			(w, h) = img.size
 			new_size = (w, h / 2)
 			return img.resize(new_size, Image.ANTIALIAS)
-		self.left, self.right = map(resize, [self.left, self.right])
+		self.map(resize)
 	
 	def match(self, opts=None):
 		# http://en.wikipedia.org/wiki/Histogram_matching
@@ -157,7 +157,16 @@ class Stereo(object):
 		self.right = self.right.point(match_merged(self.right))
 
 	def equalize(self, opts=None):
-		self.left, self.right = map(ImageOps.equalize, (self.left, self.right))
+		self.map(ImageOps.equalize)
+	
+	def map(self, fn):
+		self.left, self.right = map(fn, (self.left, self.right))
+
+	def brightness(self, amount):
+		self.map(lambda img: ImageEnhance.Brightness(img).enhance(amount))
+	
+	def contrast(self, amount):
+		self.map(lambda img: ImageEnhance.Contrast(img).enhance(amount))
 	
 	def animate(self, opts):
 		resize = getattr(opts, 'resize', None)
@@ -171,6 +180,9 @@ class Stereo(object):
 	
 	def __repr__(self):
 		return "<Image from %s with left=%r and right=%r>" % (self.basename, self.left, self.right)
+
+
+
 
 class ConflictResolver(object):
 	REPLACE = object()
@@ -186,9 +198,9 @@ class ConflictResolver(object):
 		def handle(path):
 			if handle.always:
 				return handle.always
-			response = raw_input("\n%s already exists.\nOverwrite it? [(y)es / (N)o / replace (a)ll / (s)kip existing ] " % (path,))
+			response = raw_input("\n%s already exists.\nOverwrite it? [(Y)es / (n)o / replace (a)ll / (s)kip existing ] " % (path,))
 			print
-			response = response.lower().strip()
+			response = response.lower().strip() or 'y'
 			if response == 'y':
 				return ConflictResolver.REPLACE
 			if response == 'a':
@@ -203,19 +215,19 @@ class ConflictResolver(object):
 		return cls(handle)
 
 	def __init__(self, response_fn):
-		self.resolve = response_fn
-
-def resolve_path_clash(path, conflict_resolver):
-	if os.path.exists(path):
-		response = conflict_resolver.resolve(path)
-		if response is ConflictResolver.REPLACE:
-			os.remove(path)
-		elif response is ConflictResolver.ABORT:
-			raise RuntimeError("path %r already exists!" % (path,))
-		elif response is ConflictResolver.IGNORE:
-			return
-		else:
-			raise RuntimeError("Unknown response!")
+		self.response_fn = response_fn
+	
+	def resolve(self, path):
+		if os.path.exists(path):
+			response = self.response_fn(path)
+			if response is ConflictResolver.REPLACE:
+				os.remove(path)
+			elif response is ConflictResolver.ABORT:
+				raise RuntimeError("path %r already exists!" % (path,))
+			elif response is ConflictResolver.IGNORE:
+				return
+			else:
+				raise RuntimeError("Unknown response!")
 
 class Output(object):
 	def __init__(self, path, render):
@@ -228,7 +240,7 @@ class Output(object):
 
 	def save(self, conflict_resolver):
 		img = self.render()
-		resolve_path_clash(self.path, conflict_resolver)
+		conflict_resolver.resolve(self.path)
 		img.save(self.path)
 	
 class AnimatedOuptut(object):
@@ -255,7 +267,7 @@ class AnimatedOuptut(object):
 				cmd.extend(['-resize', self.resize])
 			cmd.extend(paths)
 			cmd.append(self.path)
-			resolve_path_clash(self.path, conflict_resolver)
+			conflict_resolver.resolve(self.path)
 			subprocess.check_call(cmd)
 		finally:
 			try:
@@ -270,6 +282,8 @@ class Gui(object):
 		self.slice = opts.slice or 0
 		self.align = opts.align or 0
 		self.approved = False
+		self.brightness = 1.0
+		self.contrast = 1.0
 	
 	def display(self):
 		from PIL import ImageTk
@@ -286,7 +300,13 @@ class Gui(object):
 	def update(self, image):
 		image.slice(self.slice)
 		image.align(self.align)
+		image.brightness(self.brightness)
+		image.contrast(self.contrast)
 		return image
+
+	def opts_description(self):
+		keys = "slice", "align", "brightness", "contrast"
+		return " ".join(["%s=%s" % (key, getattr(self, key)) for key in keys])
 
 	def run(self):
 		#TODO: allow for re-ordering / adding / removing operations
@@ -296,25 +316,43 @@ class Gui(object):
 
 		def accept(event):
 			logging.debug("applying GUI changes to real image...")
-			logging.info("accepted values:\n--slice=%s --align=%s" % (self.slice, self.align))
+			logging.info("accepted values:\n%s" % (self.opts_description()))
 			self.update(self.image)
 			self.approved = True
 			quit(event)
 
 		root = Tkinter.Tk()
 		root.resizable(width=Tkinter.FALSE, height=Tkinter.FALSE)
+		
+		def make_callback(fn):
+			def generated(*a):
+				def callback(*ignored):
+					fn(*a)
+					logging.info("updated settings to: %s" % (self.opts_description(),))
+					self.display()
+				return callback
+			return generated
 
+		@make_callback
 		def align(amount):
-			def action(*ignored):
-				self.align += amount
-				self.display()
-			return action
+			self.align += amount
 
+		@make_callback
 		def slice(amount):
-			def action(*ignored):
-				self.slice += amount
-				self.display()
-			return action
+			self.slice += amount
+
+		@make_callback
+		def brightness(amount):
+			self.brightness += amount
+
+		@make_callback
+		def contrast(amount):
+			self.contrast += amount
+
+		@make_callback
+		def reset():
+			self.brightness = 1.0
+			self.contrast = 1.0
 
 		root.bind('<Escape>', quit)
 		root.bind('<Return>', accept)
@@ -334,6 +372,16 @@ class Gui(object):
 
 		bind_arrows('Up','Down','Left','Right')
 		bind_arrows('j','k','l','h')
+
+		#def debug(evt):
+		#	print evt.keysym
+		#root.bind('<Key>', debug)
+		root.bind('<equal>', brightness(0.05))
+		root.bind('<minus>', brightness(-0.05))
+
+		root.bind('<plus>', contrast(0.05))
+		root.bind('<underscore>', contrast(-0.05))
+		root.bind('<0>', reset())
 
 		self.label = Tkinter.Label(root)
 		self.label.pack()
