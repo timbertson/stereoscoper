@@ -1,12 +1,51 @@
-<?xml version="1.0" ?>
+<?xml version="1.0"?>
 <?xml-stylesheet type='text/xsl' href='interface.xsl'?>
-<interface uri="http://gfxmonk.net/dist/0install/stereoscoper.xml" xmlns="http://zero-install.sourceforge.net/2004/injector/interface">
+<interface xmlns="http://zero-install.sourceforge.net/2004/injector/interface" uri="http://gfxmonk.net/dist/0install/stereoscoper.xml">
 	<name>stereoscoper</name>
 	<summary>Batch modify stereoscopic images</summary>
 	<description>
-Batch modify stereoscopic images
-	</description>
+# stereoscoper
+Bulk process stereoscopic (3d) images
 
+-----
+
+Stereoscoper takes in one or more stereoscopic images and spits out a modified version.
+
+It can split / merge / swap images, produce an animated gif, do alignment / depth adjustment, match colours between image pairs, and more.
+
+For the interactive mode, here are the shortcuts:
+
+	up / down (or j / k):    change vertical offset
+	left / right (or h / l): change horizontal offset (depth)
+	- / =:                   change brightness
+	_ / +:                   change contrast
+	0:                       reset brightness/contrast
+	return:                  accept
+	esc:                     cancel
+
+Run --help to see all the batch options available.
+	</description>
+	<rich-description xmlns="http://gfxmonk.net/dist/0install">
+		<div xmlns="http://www.w3.org/1999/xhtml">
+			<h1 id="stereoscoper">stereoscoper</h1>
+			<p>Bulk process stereoscopic (3d) images</p>
+			<hr/>
+			<p>Stereoscoper takes in one or more stereoscopic images and spits out a modified version.</p>
+			<p>It can split / merge / swap images, produce an animated gif, do alignment / depth adjustment, match colours between image pairs, and more.</p>
+			<p>For the interactive mode, here are the shortcuts:</p>
+			<pre>
+				<code>up / down (or j / k):    change vertical offset
+left / right (or h / l): change horizontal offset (depth)
+- / =:                   change brightness
+_ / +:                   change contrast
+0:                       reset brightness/contrast
+return:                  accept
+esc:                     cancel
+</code>
+			</pre>
+			<p>Run --help to see all the batch options available.</p>
+		</div>
+	</rich-description>
 	<group main="stereoscoper">
 		<requires interface="http://gfxmonk.net/dist/0install/python-imaging.xml"/>
 		<requires interface="http://gfxmonk.net/dist/0install/imagemagick.xml"/>
@@ -15,9 +54,10 @@ Batch modify stereoscopic images
 		<command name="run" path="stereoscoper">
 			<runner interface="http://repo.roscidus.com/python/python"/>
 		</command>
-		<environment name="PATH" insert="" mode="prepend" />
-
-		<implementation id="." version="0.0.1">
+		<environment insert="" mode="prepend" name="PATH"/>
+		<implementation id="sha1new=d67dfba7631ce1aeceab5cdfeba849f2756896f7" released="2011-08-28" version="0.1">
+			<manifest-digest sha256="930b3557d565b228f7b7367cca7fc3ab54a57f446bfdb02bf938e2551ba9d8bb"/>
+			<archive href="http://gfxmonk.net/dist/0install/stereoscoper/stereoscoper-0.1.tgz" size="4820"/>
 		</implementation>
 	</group>
 </interface>
