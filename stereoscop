@@ -1,19 +1,17 @@
 #!/usr/bin/env python
 
-#DEPENDS:
-# PIL
-# imagemagick
-# PIL-imagetk (python-imaging-tk in RPM)
 import sys
 import os
 import subprocess
-from PIL import Image
+from PIL import Image, ImageOps
 import logging
+import numpy
+import tempfile
 
 class SafeError(RuntimeError): pass
 
 class Stereo(object):
-	default_suffix = 'out'
+	suffix = 'out'
 	dest = None
 
 	def __init__(self, left, right, basename):
@@ -60,13 +58,13 @@ class Stereo(object):
 			final.paste(left, (0,0))
 			final.paste(right, (lw, 0))
 			return final
-		self.outputs = [Output(path=self.add_suffix("out"), render=render)]
+		self.outputs = [Output(path=self.add_suffix(), render=render)]
 
-	def add_suffix(self, suffix):
+	def add_suffix(self, *suffixes):
 		base, ext = os.path.splitext(self.basename)
 		if self.dest:
 			base = os.path.join(self.dest, base)
-		return "%s-%s%s"% (base, suffix, ext)
+		return "%s-%s%s"% (base, "-".join([self.suffix] + list(suffixes)), ext)
 	
 	def crop_axis(self, points, percent, sign):
 		a, b = points
@@ -113,10 +111,51 @@ class Stereo(object):
 			return img.resize(new_size, Image.ANTIALIAS)
 		self.left, self.right = map(resize, [self.left, self.right])
 	
+	def match(self, opts=None):
+		# http://en.wikipedia.org/wiki/Histogram_matching
+		size = 256
+		def chunk(l):
+			for i in xrange(0, len(l), size):
+				endpoint = i+size
+				yield l[i:i+size]
+			assert len(l) == endpoint # make sure chunking was complete and exhaustive
+
+		def find_closest_idx(target, items):
+			# items MUST be a monotonically increasing sequence
+			last_value = None
+			for i, value in enumerate(items):
+				if value > target:
+					if last_value is None or abs(target - value) < abs(target - last_value):
+						return i
+					else:
+						return i - 1
+				last_value = value
+			return i
+
+		def new_channel_mappings():
+			h1 = chunk(self.left.histogram())
+			h2 = chunk(self.right.histogram())
+			for (left, right) in zip(h1, h2):
+				left_hist = numpy.cumsum(left)
+				right_hist = numpy.cumsum(right)
+
+				def new_level(level):
+					value_in_left = left_hist[level]
+					return find_closest_idx(value_in_left, right_hist)
+				yield map(new_level, range(0, size))
+
+		r, g, b = new_channel_mappings()
+		combined_table = r + g + b
+		self.left = self.left.point(combined_table)
+
+	def equalize(self, opts=None):
+		self.left, self.right = map(ImageOps.equalize, (self.left, self.right))
+	
+	#TODO: PythonMagick?
 	def animate(self, opts):
 		resize = getattr(opts, 'resize', None)
 		delay = getattr(opts, 'delay', None)
-		gif = AnimatedOuptut(stereo=self, path=self.add_suffix('anim') +'.gif', resize=resize, delay=delay)
+		gif = AnimatedOuptut(stereo=self, path=self.add_suffix() +'.gif', resize=resize, delay=delay)
 		self.outputs = [gif]
 	
 	def save(self, conflict_resolver):
@@ -175,6 +214,10 @@ class Output(object):
 	def __init__(self, path, render):
 		self.path = path
 		self.render = render
+	
+	def override_path(self, path):
+		#TODO: copy ext!
+		self.path = path
 
 	def save(self, conflict_resolver):
 		img = self.render()
@@ -189,23 +232,36 @@ class AnimatedOuptut(object):
 		self.delay = delay
 	
 	def save(self, conflict_resolver):
-		self.stereo.split()
-		self.stereo.save(conflict_resolver = ConflictResolver.always(ConflictResolver.IGNORE))
-		paths = [output.path for output in self.stereo.outputs]
-		cmd = ['convert', '-delay', self.delay or '15', '-loop', '0']
-		if self.resize:
-			cmd.extend(['-resize', self.resize])
-		cmd.extend(paths)
-		cmd.append(self.path)
-		resolve_path_clash(self.path, conflict_resolver)
-		subprocess.check_call(cmd)
+		stereo = self.stereo.copy()
+		stereo.split()
+		def output_to_temp(output):
+			base, ext = os.path.splitext(output.path)
+			temp_path = tempfile.NamedTemporaryFile(suffix=ext, delete=False).name
+			output.override_path(temp_path)
+		map(output_to_temp, stereo.outputs)
+
+		stereo.save(conflict_resolver = ConflictResolver.always(ConflictResolver.REPLACE))
+		paths = [output.path for output in stereo.outputs]
+		try:
+			cmd = ['convert', '-delay', self.delay or '15', '-loop', '0']
+			if self.resize:
+				cmd.extend(['-resize', self.resize])
+			cmd.extend(paths)
+			cmd.append(self.path)
+			resolve_path_clash(self.path, conflict_resolver)
+			subprocess.check_call(cmd)
+		finally:
+			try:
+				map(os.remove, paths)
+			except StandardError, e:
+				print >> sys.stderr, "Warning: could not remove files (%s): %r" % (e, paths)
 
 class Gui(object):
 	def __init__(self, image, opts):
 		self.image = image
 		self.opts = opts
-		self.slice = 0
-		self.align = 0
+		self.slice = opts.slice or 0
+		self.align = opts.align or 0
 		self.approved = False
 	
 	def display(self):
@@ -226,12 +282,14 @@ class Gui(object):
 		return image
 
 	def run(self):
+		#TODO: allow for re-ordering / adding / removing operations
 		import Tkinter
 		def quit(event):
 			event.widget.quit()
 
 		def accept(event):
 			logging.debug("applying GUI changes to real image...")
+			logging.info("accepted values:\n--slice=%s --align=%s" % (self.slice, self.align))
 			self.update(self.image)
 			self.approved = True
 			quit(event)
@@ -279,29 +337,43 @@ class Gui(object):
 			raise SafeError("Cancelled.")
 
 def main():
-	from optparse import OptionParser
-	p = OptionParser()
+	from optparse import OptionParser, OptionGroup
+	p = OptionParser("usage: %prog [OPTIONS] input1 [input2 [input3]]")
 	p.add_option('-v', '--verbose', action='store_true')
-	p.add_option('-i', '--input', help='input image (pre-merged)')
-	p.add_option('-l', '--left', help='inptut image (left)')
-	p.add_option('-r', '--right', help='inptut image (right)')
-	p.add_option('--suffix')
-	p.add_option('-o', '--dest')
-	p.add_option('-f', '--force', help='replace files without asking', action='store_true')
-	p.add_option('--squash', action='append_const', const='squash',  dest='actions', default=[], help='squash half vertically')
-	p.add_option('--split', action='append_const',  const='split',   dest='actions', help='split into left & right')
-	p.add_option('--merge', action='append_const',  const='merge',   dest='actions', help='merge left & right images')
-	p.add_option('--swap', action='append_const',   const='swap',    dest='actions', help='swap left & right')
-	p.add_option('--animate', action='append_const',const='animate', dest='actions', help='make animated gif')
-	p.add_option('-g', '--gui', help='modify slice / align interactively', action='store_true')
-	p.add_option('--resize', help='(animation only) resize image to fit in rect (e.g "200x120")')
-	p.add_option('--size', dest='resize', help='alias for --resize')
+	p.add_option('-f', '--force', help='replace existing files without asking', action='store_true')
+
+	input_opts = OptionGroup(p, "Input / Output")
+	input_opts.add_option('-l', '--left', help='inptut image (left)')
+	input_opts.add_option('-r', '--right', help='inptut image (right)')
+	input_opts.add_option('-o', '--suffix', help='output suffix')
+	input_opts.add_option('-d', '--dest', help='destination directory')
+
+	actions = OptionGroup(p, title="Image Actions")
+	actions.add_option('--squash', action='append_const',   const='squash',   dest='actions', default=[], help='squash half vertically')
+	actions.add_option('--split', action='append_const',    const='split',    dest='actions', help='split into left & right')
+	actions.add_option('--merge', action='append_const',    const='merge',    dest='actions', help='merge left & right images')
+	actions.add_option('--swap', action='append_const',     const='swap',     dest='actions', help='swap left & right')
+	actions.add_option('--equalize', action='append_const', const='equalize', dest='actions', help='equalize brightness (auto brightness / contrast)')
+	actions.add_option('--match', action='append_const',    const='match',    dest='actions', help='match left & right colours')
+	actions.add_option('--animate', action='append_const',  const='animate',  dest='actions', help='make animated gif')
+
+	gui_opts = OptionGroup(p, title="GUI Actions")
+	gui_opts.add_option('-g', '--gui', help='modify slice / align interactively', action='store_true')
+	gui_opts.add_option('--resize', help='(animation only) resize image to fit in rect (e.g "200x120")')
+	gui_opts.add_option('--size', dest='resize', help='alias for --resize')
+	gui_opts.add_option('--slice', default=0, type='int')
+	gui_opts.add_option('--align', default=0, type='int')
+
+	p.add_option_group(input_opts)
+	p.add_option_group(actions)
+	p.add_option_group(gui_opts)
 	opts, args = p.parse_args()
 
 	logging.basicConfig(level=logging.DEBUG if opts.verbose else logging.INFO, format="%(message)s")
 
 	if opts.suffix:
-		Stereo.default_suffix = opts.suffix
+		Stereo.suffix = opts.suffix
+
 	if opts.dest:
 		if not os.path.exists(opts.dest):
 			logging.debug("creating %s" % (opts.dest,))
@@ -328,7 +400,8 @@ def main():
 		process(Stereo.from_pair(opts.left, opts.right))
 	else:
 		assert not (opts.left or opts.right)
-		for file in args or [opts.input]:
+		assert len(args) > 0, "Please provide an input file! (or try --help)"
+		for file in args:
 			process(Stereo.from_single(file))
 	
 	assert len(opts.actions) > 0, "Please provide at least one action!"
@@ -336,7 +409,7 @@ def main():
 if __name__ == '__main__':
 	try:
 		sys.exit(main())
-	except (SafeError), e:
+	except (SafeError, AssertionError), e:
 		print >> sys.stderr, e
 		sys.exit(1)
 	except (KeyboardInterrupt, EOFError):
