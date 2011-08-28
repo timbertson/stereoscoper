@@ -20,6 +20,8 @@ class Stereo(object):
 		self.left = left
 		self.right = right
 		self.basename = basename
+		self.default_action = None
+		self._outputs = None
 	
 	@classmethod
 	def from_single(cls, filename):
@@ -30,7 +32,7 @@ class Stereo(object):
 		left = img.copy().crop((0, 0, single_width, height))
 		right = img.copy().crop((single_width+middle_bit, 0, width, height))
 		instance = cls(left, right, os.path.basename(filename))
-		instance.merge()
+		instance.default_action = instance.merge
 		return instance
 
 	@classmethod
@@ -38,7 +40,7 @@ class Stereo(object):
 		left = Image.open(left_filename)
 		right = Image.open(left_filename)
 		instance = cls(left, right, os.path.basename(left_filename))
-		instance.split()
+		instance.default_action = instance.split
 		return instance
 
 	def copy(self):
@@ -46,6 +48,20 @@ class Stereo(object):
 	
 	def swap(self, opts=None):
 		self.left, self.right = self.right, self.left
+	
+	@property
+	def outputs(self):
+		if self._outputs is None:
+			self._outputs = []
+		return self._outputs
+	
+	@property
+	def has_outputs(self):
+		return self._outputs is not None
+
+	def add_outputs(self, *outputs):
+		logging.debug("adding %s outputs: %r" % (len(outputs),outputs))
+		self.outputs.extend(outputs)
 	
 	def merge(self, opts=None):
 		def render():
@@ -60,7 +76,7 @@ class Stereo(object):
 			final.paste(left, (0,0))
 			final.paste(right, (lw, 0))
 			return final
-		self.outputs = [Output(path=self.add_suffix(), render=render)]
+		self.add_outputs(Output(path=self.add_suffix(), render=render))
 
 	def add_suffix(self, suffixes=[], ext=None):
 		base, existing_ext = os.path.splitext(self.basename)
@@ -108,7 +124,7 @@ class Stereo(object):
 	def split(self, opts=None):
 		left = Output(path=self.add_suffix(['left']), render=lambda: self.left)
 		right = Output(path=self.add_suffix(['right']), render=lambda: self.right)
-		self.outputs = [left, right]
+		self.add_outputs(left, right)
 
 	def squash(self, opts=None):
 		def resize(img):
@@ -177,9 +193,13 @@ class Stereo(object):
 		resize = getattr(opts, 'resize', None)
 		delay = getattr(opts, 'delay', None)
 		gif = AnimatedOuptut(stereo=self, path=self.add_suffix(ext='gif'), resize=resize, delay=delay)
-		self.outputs = [gif]
+		self.add_outputs(gif)
 	
 	def save(self, conflict_resolver):
+		if not self.has_outputs:
+			logging.debug("no outputs specififed; performing default action")
+			self.default_action()
+		assert self.outputs is not None
 		for output in self.outputs:
 			output.save(conflict_resolver)
 	
@@ -308,7 +328,7 @@ class Gui(object):
 
 	def opts_description(self):
 		keys = "slice", "align", "brightness", "contrast"
-		return " ".join(["%s=%s" % (key, getattr(self, key)) for key in keys])
+		return " ".join(["--%s=%s" % (key, getattr(self, key)) for key in keys])
 
 	def run(self):
 		#TODO: allow for re-ordering / adding / removing operations
@@ -418,8 +438,8 @@ def main():
 	gui_opts.add_option('-g', '--gui', help='modify slice / align interactively', action='store_true')
 	gui_opts.add_option('--resize', help='(animation only) resize image to fit in rect (e.g "200x120")')
 	gui_opts.add_option('--size', dest='resize', help='alias for --resize')
-	gui_opts.add_option('--slice', default=0, type='int')
-	gui_opts.add_option('--align', default=0, type='int')
+	gui_opts.add_option('--slice', default=0, type='float')
+	gui_opts.add_option('--align', default=0, type='float')
 	gui_opts.add_option('--brightness', default=1.0, type='float')
 	gui_opts.add_option('--contrast', default=1.0, type='float')
 
@@ -449,7 +469,7 @@ def main():
 		for action in opts.actions:
 			logging.debug("performing action: %s" % (action,))
 			getattr(image, action)(opts)
-			logging.debug("image -> %r" % (image,))
+			logging.debug("after %s, image = %r" % (action, image))
 		if opts.gui:
 			Gui(image, opts).run()
 		else:

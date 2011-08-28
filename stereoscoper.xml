@@ -3,6 +3,7 @@
 <interface xmlns="http://zero-install.sourceforge.net/2004/injector/interface" uri="http://gfxmonk.net/dist/0install/stereoscoper.xml">
 	<name>stereoscoper</name>
 	<summary>Batch modify stereoscopic images</summary>
+	<homepage>https://github.com/gfxmonk/stereoscoper</homepage>
 	<description>
 # stereoscoper
 Bulk process stereoscopic (3d) images
