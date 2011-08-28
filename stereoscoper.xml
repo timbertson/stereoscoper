@@ -60,5 +60,9 @@ esc:                     cancel
 			<manifest-digest sha256="930b3557d565b228f7b7367cca7fc3ab54a57f446bfdb02bf938e2551ba9d8bb"/>
 			<archive href="http://gfxmonk.net/dist/0install/stereoscoper/stereoscoper-0.1.tgz" size="4820"/>
 		</implementation>
+		<implementation id="sha1new=6e03d79b4e4fe7cf2ea7776883bde68513b49b1f" released="2011-08-28" version="0.2">
+			<manifest-digest sha256="7f3da7a538dad1b0975103d22ac617534e8d6a97df8cbb8807cc5ee6e7312f33"/>
+			<archive href="http://gfxmonk.net/dist/0install/stereoscoper/stereoscoper-0.2.tgz" size="4972"/>
+		</implementation>
 	</group>
 </interface>
