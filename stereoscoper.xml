@@ -51,7 +51,9 @@ esc:                     cancel
 		<requires interface="http://gfxmonk.net/dist/0install/python-imaging.xml"/>
 		<requires interface="http://gfxmonk.net/dist/0install/imagemagick.xml"/>
 		<requires interface="http://gfxmonk.net/dist/0install/numpy.xml"/>
-		<requires interface="http://repo.roscidus.com/python/python"/>
+		<requires interface="http://repo.roscidus.com/python/python">
+			<version before="3.0"/>
+		</requires>
 		<command name="run" path="stereoscoper">
 			<runner interface="http://repo.roscidus.com/python/python">
 				<version before="3.0"/>
