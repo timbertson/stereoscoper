@@ -38,7 +38,7 @@ class Stereo(object):
 	@classmethod
 	def from_pair(cls, left_filename, right_filename):
 		left = Image.open(left_filename)
-		right = Image.open(left_filename)
+		right = Image.open(right_filename)
 		instance = cls(left, right, os.path.basename(left_filename))
 		instance.default_action = instance.split
 		return instance
