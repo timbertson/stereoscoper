@@ -6,6 +6,8 @@ import operator
 import subprocess
 import logging
 import tempfile
+import itertools
+import warnings
 
 from PIL import Image, ImageOps, ImageEnhance
 import numpy
@@ -13,7 +15,7 @@ import numpy
 class SafeError(RuntimeError): pass
 
 class Stereo(object):
-	suffix = 'out'
+	suffix = None
 	dest = None
 
 	def __init__(self, left, right, basename):
@@ -42,7 +44,7 @@ class Stereo(object):
 		left = Image.open(left_filename)
 		right = Image.open(right_filename)
 		instance = cls(left, right, os.path.basename(left_filename))
-		instance.default_action = instance.split
+		instance.default_action = type(instance).split
 		return instance
 
 	def copy(self):
@@ -88,7 +90,8 @@ class Stereo(object):
 			ext = existing_ext
 		if self.dest:
 			base = os.path.join(self.dest, base)
-		return "%s-%s%s"% (base, "-".join([self.suffix] + list(suffixes)), ext)
+		components = filter(bool, [base, self.suffix] + list(suffixes))
+		return "%s%s"% ("-".join(components), ext)
 	
 	def crop_axis(self, points, percent, sign):
 		a, b = points
@@ -197,13 +200,19 @@ class Stereo(object):
 		gif = AnimatedOuptut(stereo=self, path=self.add_suffix(ext='gif'), resize=resize, delay=delay)
 		self.add_outputs(gif)
 	
-	def save(self, conflict_resolver):
+	def save(self, conflict_resolver, quality=None):
 		if not self.has_outputs:
 			logging.debug("no outputs specififed; performing default action")
-			self.default_action()
+			self.default_action(self)
 		assert self.outputs is not None
+		quality = 85 if quality is None else quality
+		logging.debug("quality = %s" % (quality,))
 		for output in self.outputs:
-			output.save(conflict_resolver)
+			output.save(conflict_resolver, quality=quality)
+		
+		# PIL can accumulate cycles easily, force a GC so we don't run out of memory
+		import gc
+		gc.collect()
 	
 	def __repr__(self):
 		return "<Image from %s with left=%r and right=%r>" % (self.basename, self.left, self.right)
@@ -211,10 +220,17 @@ class Stereo(object):
 
 
 
+class Sentinel(object):
+	def __init__(self, desc):
+		self.__desc = desc
+	
+	def __repr__(self):
+		return "<#Sentinel(%s)>" % (self.__desc,)
+
 class ConflictResolver(object):
-	REPLACE = object()
-	ABORT = object()
-	IGNORE = object()
+	REPLACE = Sentinel("REPLACE")
+	ABORT = Sentinel("ABORT")
+	IGNORE = Sentinel("IGNORE")
 
 	@classmethod
 	def always(cls, response):
@@ -247,6 +263,7 @@ class ConflictResolver(object):
 	def resolve(self, path):
 		if os.path.exists(path):
 			response = self.response_fn(path)
+			logging.debug("conflict response = %s" % (response,))
 			if response is ConflictResolver.REPLACE:
 				os.remove(path)
 			elif response is ConflictResolver.ABORT:
@@ -265,10 +282,10 @@ class Output(object):
 		#TODO: copy ext!
 		self.path = path
 
-	def save(self, conflict_resolver):
+	def save(self, conflict_resolver, quality):
 		img = self.render()
 		conflict_resolver.resolve(self.path)
-		img.save(self.path)
+		img.save(self.path, quality=quality)
 	
 class AnimatedOuptut(object):
 	def __init__(self, stereo, path, resize=None, delay=None):
@@ -277,7 +294,7 @@ class AnimatedOuptut(object):
 		self.resize = resize
 		self.delay = delay
 	
-	def save(self, conflict_resolver):
+	def save(self, conflict_resolver, quality=None):
 		stereo = self.stereo.copy()
 		stereo.split()
 		def output_to_temp(output):
@@ -286,7 +303,7 @@ class AnimatedOuptut(object):
 			output.override_path(temp_path)
 		map(output_to_temp, stereo.outputs)
 
-		stereo.save(conflict_resolver = ConflictResolver.always(ConflictResolver.REPLACE))
+		stereo.save(conflict_resolver = ConflictResolver.always(ConflictResolver.REPLACE), quality=quality)
 		paths = [output.path for output in stereo.outputs]
 		try:
 			cmd = ['convert', '-delay', self.delay or '15', '-loop', '0']
@@ -303,18 +320,23 @@ class AnimatedOuptut(object):
 				print >> sys.stderr, "Warning: could not remove files (%s): %r" % (e, paths)
 
 class Gui(object):
-	def __init__(self, image, opts):
+	def __init__(self, images, opts):
+		self.opts = opts
+		self.images = iter(images)
+		self.update(next(self.images))
+	
+	def update(self, image):
 		self.image = image
 		self.approved = False
-		self.opts = opts
+		opts = self.opts
 		self.slice = opts.slice
 		self.align = opts.align
 		self.brightness = opts.brightness
 		self.contrast = opts.contrast
-	
+
 	def display(self):
 		from PIL import ImageTk
-		image = self.update(self.image.copy())
+		image = self.apply_adjustments(self.image.copy())
 		left, right = image.left, image.right
 		blended = Image.blend(left, right, 0.5)
 		blended.thumbnail((600,600))
@@ -324,7 +346,7 @@ class Gui(object):
 		self.label.image = tk_img
 		self.label.update()
 	
-	def update(self, image):
+	def apply_adjustments(self, image):
 		image.apply_adjustments(self)
 		return image
 
@@ -339,11 +361,25 @@ class Gui(object):
 			event.widget.quit()
 
 		def accept(event):
+			if self.approved:
+				# double-return. ignore
+				return
 			logging.debug("applying GUI changes to real image...")
 			logging.info("accepted values:\n%s" % (self.opts_description()))
-			self.update(self.image)
+			self.apply_adjustments(self.image)
 			self.approved = True
-			quit(event)
+			try:
+				self.image.save(conflict_resolver = self.opts.conflict_resolver, quality = self.opts.quality)
+			except:
+				quit(event)
+				raise
+			try:
+				next_image = next(self.images)
+			except StopIteration:
+				quit(event)
+			else:
+				self.update(next_image)
+				self.display()
 
 		root = Tkinter.Tk()
 		root.resizable(width=Tkinter.FALSE, height=Tkinter.FALSE)
@@ -410,14 +446,14 @@ class Gui(object):
 		self.label = Tkinter.Label(root)
 		self.label.pack()
 		self.display()
-		root.title(self.image.basename)
+		root.title("Stereoscoper")
 		root.mainloop()
 		if not self.approved:
 			raise SafeError("Cancelled.")
 
 def main():
 	from optparse import OptionParser, OptionGroup
-	p = OptionParser("usage: %prog [OPTIONS] input1 [input2 [input3]]")
+	p = OptionParser("usage: %prog [OPTIONS] input1 [input2 [input3]]\n(If given a directory, each file within is processed)")
 	p.add_option('-v', '--verbose', action='store_true')
 	p.add_option('-f', '--force', help='replace existing files without asking', action='store_true')
 
@@ -426,6 +462,7 @@ def main():
 	input_opts.add_option('-r', '--right', help='inptut image (right)')
 	input_opts.add_option('-o', '--suffix', help='output suffix')
 	input_opts.add_option('-d', '--dest', help='destination directory')
+	input_opts.add_option('-q', '--quality', type='int', help='output quality (1 - 100)')
 
 	actions = OptionGroup(p, title="Image Actions")
 	actions.add_option('--squash', action='append_const',   const='squash',   dest='actions', default=[], help='squash half vertically')
@@ -462,30 +499,36 @@ def main():
 	conflict_resolver = ConflictResolver.prompt()
 	if opts.force:
 		conflict_resolver = ConflictResolver.always(ConflictResolver.REPLACE)
+	opts.conflict_resolver = conflict_resolver
 	#TODO: use a graphical conflict resolver for --gui
 
-	def process(image):
-		logging.info("Processing %s" % image.basename)
-		for action in opts.actions:
-			logging.debug("performing action: %s" % (action,))
-			getattr(image, action)(opts)
-			logging.debug("after %s, image = %r" % (action, image))
+	def process(images):
 		if opts.gui:
-			Gui(image, opts).run()
+			Gui(images, opts).run()
 		else:
-			image.apply_adjustments(opts)
-		image.save(conflict_resolver = conflict_resolver)
+			for image in images:
+				logging.info("Processing %s" % image.basename)
+				for action in opts.actions:
+					logging.debug("performing action: %s" % (action,))
+					getattr(image, action)(opts)
+					logging.debug("after %s, image = %r" % (action, image))
+				image.apply_adjustments(opts)
+				image.save(conflict_resolver = conflict_resolver, quality=opts.quality)
 
 	if opts.left and opts.right:
 		assert opts.left and opts.right
-		process(Stereo.from_pair(opts.left, opts.right))
+		process([Stereo.from_pair(opts.left, opts.right)])
 	else:
 		assert not (opts.left or opts.right)
 		assert len(args) > 0, "Please provide an input file! (or try --help)"
-		for file in args:
-			process(Stereo.from_single(file))
-	
-	#assert len(opts.actions) > 0, "Please provide at least one action!"
+		def flattened(args):
+			for arg in args:
+				if os.path.isdir(arg):
+					for f in os.listdir(arg):
+						yield os.path.join(arg, f)
+				else:
+					yield arg
+		process(itertools.imap(Stereo.from_single, flattened(args)))
 
 if __name__ == '__main__':
 	try:
