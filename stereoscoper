@@ -32,7 +32,9 @@ class Stereo(object):
 		left = img.copy().crop((0, 0, single_width, height))
 		right = img.copy().crop((single_width+middle_bit, 0, width, height))
 		instance = cls(left, right, os.path.basename(filename))
-		instance.default_action = instance.merge
+
+		# type() here is used to avoid a circular reference, aiding reference-counted GC
+		instance.default_action = type(instance).merge
 		return instance
 
 	@classmethod
@@ -315,7 +317,7 @@ class Gui(object):
 		image = self.update(self.image.copy())
 		left, right = image.left, image.right
 		blended = Image.blend(left, right, 0.5)
-		blended.thumbnail((600,400))
+		blended.thumbnail((600,600))
 
 		tk_img = ImageTk.PhotoImage(blended)
 		self.label.configure(image = tk_img)
@@ -432,20 +434,18 @@ def main():
 	actions.add_option('--swap', action='append_const',     const='swap',     dest='actions', help='swap left & right')
 	actions.add_option('--equalize', action='append_const', const='equalize', dest='actions', help='equalize brightness (auto brightness / contrast)')
 	actions.add_option('--match', action='append_const',    const='match',    dest='actions', help='match left & right colours')
-	actions.add_option('--animate', action='append_const',  const='animate',  dest='actions', help='make animated gif')
+	actions.add_option('--animate', action='append_const',  const='animate',  dest='actions', help='make two-frame animated gif')
 
-	gui_opts = OptionGroup(p, title="GUI Actions")
-	gui_opts.add_option('-g', '--gui', help='modify slice / align interactively', action='store_true')
-	gui_opts.add_option('--resize', help='(animation only) resize image to fit in rect (e.g "200x120")')
-	gui_opts.add_option('--size', dest='resize', help='alias for --resize')
-	gui_opts.add_option('--slice', default=0, type='float')
-	gui_opts.add_option('--align', default=0, type='float')
-	gui_opts.add_option('--brightness', default=1.0, type='float')
-	gui_opts.add_option('--contrast', default=1.0, type='float')
+	actions.add_option('-g', '--gui', help='modify slice / align interactively', action='store_true')
+	actions.add_option('--resize', help='(animation only) resize image to fit in rect (e.g "200x120")')
+	actions.add_option('--size', dest='resize', help='alias for --resize')
+	actions.add_option('--slice', default=0, type='float')
+	actions.add_option('--align', default=0, type='float')
+	actions.add_option('--brightness', default=1.0, type='float')
+	actions.add_option('--contrast', default=1.0, type='float')
 
 	p.add_option_group(input_opts)
 	p.add_option_group(actions)
-	p.add_option_group(gui_opts)
 	opts, args = p.parse_args()
 
 	logging.basicConfig(level=logging.DEBUG if opts.verbose else logging.INFO, format="%(message)s")
@@ -485,7 +485,7 @@ def main():
 		for file in args:
 			process(Stereo.from_single(file))
 	
-	assert len(opts.actions) > 0, "Please provide at least one action!"
+	#assert len(opts.actions) > 0, "Please provide at least one action!"
 
 if __name__ == '__main__':
 	try:
