@@ -502,16 +502,19 @@ def main():
 	opts.conflict_resolver = conflict_resolver
 	#TODO: use a graphical conflict resolver for --gui
 
+	def apply_actions(image):
+		logging.info("Processing %s" % image.basename)
+		for action in opts.actions:
+			logging.debug("performing action: %s" % (action,))
+			getattr(image, action)(opts)
+			logging.debug("after %s, image = %r" % (action, image))
+		return image
+
 	def process(images):
 		if opts.gui:
 			Gui(images, opts).run()
 		else:
 			for image in images:
-				logging.info("Processing %s" % image.basename)
-				for action in opts.actions:
-					logging.debug("performing action: %s" % (action,))
-					getattr(image, action)(opts)
-					logging.debug("after %s, image = %r" % (action, image))
 				image.apply_adjustments(opts)
 				image.save(conflict_resolver = conflict_resolver, quality=opts.quality)
 
@@ -528,7 +531,9 @@ def main():
 						yield os.path.join(arg, f)
 				else:
 					yield arg
-		process(itertools.imap(Stereo.from_single, flattened(args)))
+		stereos = itertools.imap(Stereo.from_single, flattened(args))
+		stereos = itertools.imap(apply_actions, stereos)
+		process(stereos)
 
 if __name__ == '__main__':
 	try:
