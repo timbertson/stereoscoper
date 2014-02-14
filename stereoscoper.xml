@@ -48,11 +48,11 @@ esc:                     cancel
 		</div>
 	</rich-description>
 	<group main="stereoscoper">
-		<requires interface="http://gfxmonk.net/dist/0install/python-imaging.xml"/>
+		<requires interface="http://gfxmonk.net/dist/0install/python-pillow.xml"/>
 		<requires interface="http://gfxmonk.net/dist/0install/imagemagick.xml"/>
 		<requires interface="http://gfxmonk.net/dist/0install/numpy.xml"/>
 		<requires interface="http://gfxmonk.net/dist/0install/tkinter.xml"/>
-		<requires interface="http://gfxmonk.net/dist/0install/python-imaging-tk.xml"/>
+		<requires interface="http://gfxmonk.net/dist/0install/python-pillow-tk.xml"/>
 		<requires interface="http://repo.roscidus.com/python/python">
 			<version before="3.0"/>
 		</requires>
