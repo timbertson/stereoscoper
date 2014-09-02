@@ -16,6 +16,7 @@ class SafeError(RuntimeError): pass
 
 class Stereo(object):
 	suffix = None
+	dest_dir = None
 	dest = None
 
 	def __init__(self, left, right, basename):
@@ -83,13 +84,15 @@ class Stereo(object):
 		self.add_outputs(Output(path=self.add_suffix(), render=render))
 
 	def add_suffix(self, suffixes=[], ext=None):
+		if self.dest is not None:
+			return self.dest
 		base, existing_ext = os.path.splitext(self.basename)
 		if ext is not None:
 			ext = os.path.extsep + ext
 		else:
 			ext = existing_ext
-		if self.dest:
-			base = os.path.join(self.dest, base)
+		if self.dest_dir:
+			base = os.path.join(self.dest_dir, base)
 		components = filter(bool, [base, self.suffix] + list(suffixes))
 		return "%s%s"% ("-".join(components), ext)
 	
@@ -271,7 +274,7 @@ class ConflictResolver(object):
 			elif response is ConflictResolver.IGNORE:
 				return
 			else:
-				raise RuntimeError("Unknown response!")
+				raise RuntimeError("Unknown response: %r!" %(response,))
 
 class Output(object):
 	def __init__(self, path, render):
@@ -461,6 +464,7 @@ def main():
 	input_opts.add_option('-l', '--left', help='inptut image (left)')
 	input_opts.add_option('-r', '--right', help='inptut image (right)')
 	input_opts.add_option('-o', '--suffix', help='output suffix')
+	input_opts.add_option('--output', help='output file (must be used with only a single image)')
 	input_opts.add_option('-d', '--dest', help='destination directory')
 	input_opts.add_option('-q', '--quality', type='int', help='output quality (1 - 100)')
 
@@ -490,13 +494,19 @@ def main():
 	if opts.suffix:
 		Stereo.suffix = opts.suffix
 
+	if opts.output:
+		assert not opts.dest, "Can't specify both `--dest` and `--output`"
+		assert len(args) <= 1, "Can't specify multiple images with --output"
+		Stereo.dest = opts.output
+
 	if opts.dest:
 		if not os.path.exists(opts.dest):
 			logging.debug("creating %s" % (opts.dest,))
 			os.makedirs(opts.dest)
-		Stereo.dest = opts.dest
+		Stereo.dest_dir = opts.dest
 
 	conflict_resolver = ConflictResolver.prompt()
+
 	if opts.force:
 		conflict_resolver = ConflictResolver.always(ConflictResolver.REPLACE)
 	opts.conflict_resolver = conflict_resolver
@@ -518,9 +528,9 @@ def main():
 				image.apply_adjustments(opts)
 				image.save(conflict_resolver = conflict_resolver, quality=opts.quality)
 
-	if opts.left and opts.right:
+	if opts.left or opts.right:
 		assert opts.left and opts.right
-		process([Stereo.from_pair(opts.left, opts.right)])
+		stereos = [Stereo.from_pair(opts.left, opts.right)]
 	else:
 		assert not (opts.left or opts.right)
 		assert len(args) > 0, "Please provide an input file! (or try --help)"
@@ -532,8 +542,9 @@ def main():
 				else:
 					yield arg
 		stereos = itertools.imap(Stereo.from_single, flattened(args))
-		stereos = itertools.imap(apply_actions, stereos)
-		process(stereos)
+
+	stereos = itertools.imap(apply_actions, stereos)
+	process(stereos)
 
 if __name__ == '__main__':
 	try:
