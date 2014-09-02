@@ -140,6 +140,32 @@ class Stereo(object):
 			new_size = (w, h / 2)
 			return img.resize(new_size, Image.ANTIALIAS)
 		self.map(resize)
+
+	def scale(self, amount):
+		def scale(img):
+			(w, h) = img.size
+			new_size = (w * amount, h * amount)
+			return img.resize(new_size, Image.ANTIALIAS)
+		self.map(scale)
+
+	def fit(self, rect):
+		to_int = lambda n: int(round(n))
+		max_w, max_h = rect
+		def scale(img):
+			(w, h) = img.size
+			scale_w = float(max_w) / w
+			scale_h = float(max_h) / h
+			if scale_w > scale_h:
+				# image is tall
+				new_size = (to_int(w * scale_h), max_h)
+			else:
+				# image is wide
+				new_size = (max_w, to_int(h * scale_w))
+			# print("Scaling %r to fit in %r because scale = %r" %(
+			# 	new_size, rect, (scale_w, scale_h)))
+
+			return img.resize(new_size, Image.ANTIALIAS)
+		self.map(scale)
 	
 	def match(self, opts=None):
 		# http://en.wikipedia.org/wiki/Histogram_matching
@@ -330,6 +356,8 @@ class Gui(object):
 	
 	def update(self, image):
 		self.image = image
+		self.thumbnail = image.copy()
+		self.thumbnail.fit((600,600))
 		self.approved = False
 		opts = self.opts
 		self.slice = opts.slice
@@ -339,10 +367,9 @@ class Gui(object):
 
 	def display(self):
 		from PIL import ImageTk
-		image = self.apply_adjustments(self.image.copy())
+		image = self.apply_adjustments(self.thumbnail.copy())
 		left, right = image.left, image.right
 		blended = Image.blend(left, right, 0.5)
-		blended.thumbnail((600,600))
 
 		tk_img = ImageTk.PhotoImage(blended)
 		self.label.configure(image = tk_img)
