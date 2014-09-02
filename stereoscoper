@@ -461,7 +461,7 @@ class Gui(object):
 			root.bind(shift(right), slice(-0.1))
 
 		bind_arrows('Up','Down','Left','Right')
-		bind_arrows('j','k','l','h')
+		bind_arrows('j','k','h','l')
 
 		#def debug(evt):
 		#	print evt.keysym
