@@ -10,9 +10,37 @@ import itertools
 import warnings
 
 from PIL import Image, ImageOps, ImageEnhance
-import numpy
+import math
 
 class SafeError(RuntimeError): pass
+
+def rotatedRectWithMaxArea(w, h, angle):
+	"""
+	from: http://stackoverflow.com/questions/16702966/rotate-image-and-crop-out-black-borders
+	Given a rectangle of size wxh that has been rotated by 'angle' (in
+	radians), computes the width and height of the largest possible
+	axis-aligned rectangle (maximal area) within the rotated rectangle.
+	"""
+	if w <= 0 or h <= 0:
+		return 0,0
+
+	width_is_longer = w >= h
+	side_long, side_short = (w,h) if width_is_longer else (h,w)
+
+	# since the solutions for angle, -angle and 180-angle are all the same,
+	# if suffices to look at the first quadrant and the absolute values of sin,cos:
+	sin_a, cos_a = abs(math.sin(angle)), abs(math.cos(angle))
+	if side_short <= 2.*sin_a*cos_a*side_long:
+		# half constrained case: two crop corners touch the longer side,
+		#		the other two corners are on the mid-line parallel to the longer line
+		x = 0.5*side_short
+		wr,hr = (x/sin_a,x/cos_a) if width_is_longer else (x/cos_a,x/sin_a)
+	else:
+		# fully constrained case: crop touches all 4 sides
+		cos_2a = cos_a*cos_a - sin_a*sin_a
+		wr,hr = (w*cos_a - h*sin_a)/cos_2a, (h*cos_a - w*sin_a)/cos_2a
+
+	return wr,hr
 
 class Stereo(object):
 	suffix = None
@@ -128,6 +156,21 @@ class Stereo(object):
 		self.left = slice(-1, self.left)
 		self.right = slice(1, self.right)
 
+	def rotate(self, amount):
+		w,h = self.left.size
+		radians = math.radians(amount)
+		new_w, new_h = map(int, rotatedRectWithMaxArea(w, h, radians))
+
+		# (_w, _h) = img.size
+		x = int((w - new_w) / 2)+1
+		y = int((h - new_h) / 2)+1
+
+		def rot(amount, img):
+			img = img.rotate(amount, Image.BICUBIC, expand=False)
+			return img.crop((x, y, new_w, new_h))
+
+		self.left = rot(amount, self.left)
+		self.right = rot(-amount, self.right)
 
 	def split(self, opts=None):
 		left = Output(path=self.add_suffix(['left']), render=lambda: self.left)
@@ -169,6 +212,7 @@ class Stereo(object):
 	
 	def match(self, opts=None):
 		# http://en.wikipedia.org/wiki/Histogram_matching
+		import numpy
 		size = 256
 		def chunk(l):
 			for i in xrange(0, len(l), size):
@@ -219,7 +263,7 @@ class Stereo(object):
 		self.map(lambda img: ImageEnhance.Contrast(img).enhance(amount))
 	
 	def apply_adjustments(self, opts):
-		for attr in ('brightness', 'contrast', 'slice', 'align'):
+		for attr in ('brightness', 'contrast', 'slice', 'align', 'rotate'):
 			fn = getattr(self, attr)
 			fn(getattr(opts, attr))
 	
@@ -362,6 +406,7 @@ class Gui(object):
 		opts = self.opts
 		self.slice = opts.slice
 		self.align = opts.align
+		self.rotate = opts.rotate
 		self.brightness = opts.brightness
 		self.contrast = opts.contrast
 
@@ -381,7 +426,7 @@ class Gui(object):
 		return image
 
 	def opts_description(self):
-		keys = "slice", "align", "brightness", "contrast"
+		keys = "slice", "align", "brightness", "contrast", "rotate"
 		return " ".join(["--%s=%s" % (key, getattr(self, key)) for key in keys])
 
 	def run(self):
@@ -418,7 +463,7 @@ class Gui(object):
 			def generated(*a):
 				def callback(*ignored):
 					fn(*a)
-					logging.info("updated settings to: %s" % (self.opts_description(),))
+					logging.debug("updated settings to: %s" % (self.opts_description(),))
 					self.display()
 				return callback
 			return generated
@@ -426,6 +471,10 @@ class Gui(object):
 		@make_callback
 		def align(amount):
 			self.align += amount
+
+		@make_callback
+		def rotate(amount):
+			self.rotate += amount
 
 		@make_callback
 		def slice(amount):
@@ -447,9 +496,9 @@ class Gui(object):
 		root.bind('<Escape>', quit)
 		root.bind('<Return>', accept)
 
+		just = lambda x: "<%s>" % (x,)
+		shift = lambda x: just(x.upper()) if len(x) == 1 else "<Shift-%s>" % (x,)
 		def bind_arrows(up, down, left, right):
-			just = lambda x: "<%s>" % (x,)
-			shift = lambda x: just(x.upper()) if len(x) == 1 else "<Shift-%s>" % (x,)
 			root.bind(just(up), align(1))
 			root.bind(just(down), align(-1))
 			root.bind(shift(up), align(0.1))
@@ -463,11 +512,17 @@ class Gui(object):
 		bind_arrows('Up','Down','Left','Right')
 		bind_arrows('j','k','h','l')
 
-		#def debug(evt):
-		#	print evt.keysym
-		#root.bind('<Key>', debug)
+		# def debug(evt):
+		# 	print evt.keysym
+		# root.bind('<Key>', debug)
+
 		root.bind('<equal>', brightness(0.05))
 		root.bind('<minus>', brightness(-0.05))
+
+		root.bind(just('bracketright'), rotate(1))
+		root.bind(just('bracketleft'), rotate(-1))
+		root.bind(just('braceright'), rotate(0.1))
+		root.bind(just('braceleft'), rotate(-0.1))
 
 		root.bind('<plus>', contrast(0.05))
 		root.bind('<underscore>', contrast(-0.05))
@@ -509,6 +564,7 @@ def main():
 	actions.add_option('--size', dest='resize', help='alias for --resize')
 	actions.add_option('--slice', default=0, type='float')
 	actions.add_option('--align', default=0, type='float')
+	actions.add_option('--rotate', default=0, type='float')
 	actions.add_option('--brightness', default=1.0, type='float')
 	actions.add_option('--contrast', default=1.0, type='float')
 
