@@ -1,3 +1,5 @@
+<img src="http://gfxmonk.net/dist/status/project/stereoscoper.png">
+
 # stereoscoper
 Bulk process stereoscopic (3d) images
 
