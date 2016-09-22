@@ -9,7 +9,7 @@ import tempfile
 import itertools
 import warnings
 
-from PIL import Image, ImageOps, ImageEnhance
+from PIL import Image, ImageOps, ImageEnhance, ImageStat
 import math
 
 class SafeError(RuntimeError): pass
@@ -249,6 +249,20 @@ class Stereo(object):
 
 		self.left = self.left.point(match_merged(self.left))
 		self.right = self.right.point(match_merged(self.right))
+
+	def match_median():
+		def shiftHistogram(image, rdiff, gdiff, bdiff): # Shift all the pixel values
+			table = ([x + rdiff if 0 <= x + rdiff <= 255 else x for x in range(256)] +
+			         [x + gdiff if 0 <= x + gdiff <= 255 else x for x in range(256)] +
+			         [x + bdiff if 0 <= x + bdiff <= 255 else x for x in range(256)])
+			return image.point(table)
+
+		lmedian, rmedian = ImageStat.Stat(self.left).median, ImageStat.Stat(self.right).median
+		mmedian = [(lmedian[i] + rmedian[i]) // 2 for i in range(3)]
+		self.left = shiftHistogram(self.left, mmedian[0] - lmedian[0], mmedian[1] - lmedian[1], mmedian[2] - lmedian[2])
+		assert ImageStat.Stat(self.left).median == mmedian
+		self.right = shiftHistogram(self.right, mmedian[0] - rmedian[0], mmedian[1] - rmedian[1], mmedian[2] - rmedian[2])
+		assert ImageStat.Stat(self.right).median == mmedian
 
 	def equalize(self, opts=None):
 		self.map(ImageOps.equalize)
@@ -556,7 +570,8 @@ def main():
 	actions.add_option('--merge', action='append_const',    const='merge',    dest='actions', help='merge left & right images')
 	actions.add_option('--swap', action='append_const',     const='swap',     dest='actions', help='swap left & right')
 	actions.add_option('--equalize', action='append_const', const='equalize', dest='actions', help='equalize brightness (auto brightness / contrast)')
-	actions.add_option('--match', action='append_const',    const='match',    dest='actions', help='match left & right colours')
+	actions.add_option('--match', action='append_const',    const='match',    dest='actions', help='match left & right colours (histogram method)')
+	actions.add_option('--match-median', action='append_const',const='match_median', dest='actions', help='match left & right colours (median method)')
 	actions.add_option('--animate', action='append_const',  const='animate',  dest='actions', help='make two-frame animated gif')
 
 	actions.add_option('-g', '--gui', help='modify slice / align interactively', action='store_true')
