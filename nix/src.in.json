@@ -1,0 +1,6 @@
+{
+	"type": "fetchFromGitHub",
+	"owner": "timbertson",
+	"repo": "stereoscoper",
+	"rev": "version-{version}"
+}
